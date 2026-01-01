@@ -8,15 +8,15 @@ from astrbot.core import AstrBotConfig
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
-from .draw import generate_meme
-from .utils import get_first_image
+from .draw import generate_meme, generate_stitched_meme
+from .utils import get_first_image, get_message_history
 
 
 @register(
     "astrbot_plugin_qun_album",
     "Zhalslar",
     "群相册插件，记录群友怪话",
-    "1.0.2",
+    "1.0.4",
 )
 class AdminPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -40,15 +40,37 @@ class AdminPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     @filter.command("上传群相册", alias={"up"})
-    async def upload_qun_album(
-        self, event: AiocqhttpMessageEvent, album_name: str | None = None
-    ):
+    async def upload_qun_album(self, event: AiocqhttpMessageEvent):
         """上传群相册"""
-        album_id = await self._get_album_id_by_name(event, album_name)
+        parts = event.message_str.strip().split()
+        
+        real_count = None
+        real_album_name = None
+        
+        if len(parts) >= 3:
+            if parts[-1].isdigit():
+                real_count = int(parts[-1])
+                real_album_name = " ".join(parts[1:-1])
+            else:
+                real_album_name = " ".join(parts[1:])
+        elif len(parts) == 2:
+            real_album_name = parts[1]
+            
+        album_id = await self._get_album_id_by_name(event, real_album_name)
         if not album_id:
             yield event.plain_result("该相册不存在")
             return
-        image = await get_first_image(event) or await generate_meme(event)
+
+        if real_count:
+            # 获取历史记录并生成拼接图
+            messages = await get_message_history(event, real_count)
+            if not messages:
+                yield event.plain_result("获取历史消息失败，请确保是回复消息且消息存在")
+                return
+            image = await generate_stitched_meme(event, messages)
+        else:
+            image = await get_first_image(event) or await generate_meme(event)
+            
         if not image:
             yield event.plain_result("需引用图片/文字")
             return
@@ -64,7 +86,7 @@ class AdminPlugin(Star):
         await event.bot.upload_image_to_qun_album(
             group_id=group_id,
             album_id=album_id,
-            album_name=album_name,
+            album_name=real_album_name,
             file=str(save_path),
         )
         event.stop_event()

@@ -9,6 +9,8 @@ from .utils import (
     get_replyer_id,
     get_user_name,
 )
+from PIL import Image as PILImage
+import io
 
 
 async def generate_meme(event: AiocqhttpMessageEvent) -> bytes | None:
@@ -23,15 +25,19 @@ async def generate_meme(event: AiocqhttpMessageEvent) -> bytes | None:
     if not replyer_id:
         return None
 
-    avatar = await get_avatar(replyer_id)
-    if not avatar:
-        return None
-
     name = await get_user_name(
         client=event.bot,
         group_id=int(event.get_group_id()),
         user_id=int(replyer_id),
     )
+    
+    return await generate_single_meme(event.bot, replyer_id, name, reply_text)
+
+async def generate_single_meme(bot, user_id: str, name: str, text: str) -> bytes | None:
+    """生成单个表情包"""
+    avatar = await get_avatar(user_id)
+    if not avatar:
+        return None
 
     # 2. 动态导入 meme_generator，失败直接返回
     try:
@@ -58,7 +64,7 @@ async def generate_meme(event: AiocqhttpMessageEvent) -> bytes | None:
 
             image_io = await run_sync(meme)(
                 images=[avatar],
-                texts=[reply_text],
+                texts=[text],
                 args={"name": name},
             )
             return image_io.getvalue()
@@ -67,16 +73,53 @@ async def generate_meme(event: AiocqhttpMessageEvent) -> bytes | None:
             return None
     else:
         try:
-            import io
             from meme_generator import Image as MemeImage
 
             image = await asyncio.to_thread(
                 meme.generate,
                 images=[MemeImage.open(io.BytesIO(avatar))],
-                texts=[reply_text],
+                texts=[text],
                 args={"name": name},
             )
             return image
         except Exception as e:
             logger.exception(f"meme 2 生成失败: {e}")
             return None
+
+async def generate_stitched_meme(event: AiocqhttpMessageEvent, messages: list[dict]) -> bytes | None:
+    """生成多张图片并拼接"""
+    images = []
+    for msg in messages:
+        user_id = msg["user_id"]
+        text = msg["text"]
+        name = await get_user_name(
+            client=event.bot,
+            group_id=int(event.get_group_id()),
+            user_id=int(user_id),
+        )
+        img_bytes = await generate_single_meme(event.bot, user_id, name, text)
+        if img_bytes:
+            images.append(PILImage.open(io.BytesIO(img_bytes)))
+    
+    if not images:
+        return None
+    
+    try:
+        # 拼接图片
+        width = max(img.width for img in images)
+        total_height = sum(img.height for img in images)
+        
+        # 使用第一张图片的左上角像素色作为底色，通常是 my_friend 模板的背景色
+        bg_color = images[0].getpixel((0, 0))
+        with PILImage.new("RGB", (width, total_height), bg_color) as new_img:
+            y_offset = 0
+            for img in images:
+                new_img.paste(img, (0, y_offset))
+                y_offset += img.height
+            
+            output = io.BytesIO()
+            new_img.save(output, format="PNG")
+            return output.getvalue()
+    finally:
+        for img in images:
+            img.close()

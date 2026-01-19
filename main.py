@@ -9,7 +9,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 from .draw import generate_meme, generate_stitched_meme
-from .utils import get_first_image, get_message_history
+from .utils import get_first_image, get_message_history, check_group_level_permission
 
 
 @register(
@@ -59,6 +59,18 @@ class AdminPlugin(Star):
         album_id = await self._get_album_id_by_name(event, real_album_name)
         if not album_id:
             yield event.plain_result("该相册不存在")
+            return
+
+        # 检查群等级
+        level_threshold = self.conf.get("level_threshold", 0)
+        
+        is_allowed, current_level = await check_group_level_permission(
+            event,
+            level_threshold
+        )
+        
+        if not is_allowed:
+            yield event.plain_result(f"你的群等级 ({current_level}) 不足，需要达到 {level_threshold} 级才能使用此指令")
             return
 
         if real_count:

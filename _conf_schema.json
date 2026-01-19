@@ -4,5 +4,16 @@
     "hint": "保存目录为插件数据目录",
     "type": "bool",
     "default": false
+  },
+  "level_threshold": {
+    "description": "群等级限制",
+    "hint": "设置使用指令所需的最低群等级，0 为不限制",
+    "type": "int",
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    },
+    "default": 0
   }
 }

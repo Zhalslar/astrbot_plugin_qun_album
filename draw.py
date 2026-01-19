@@ -5,7 +5,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 from .utils import (
     get_avatar,
-    get_reply_text,
+    get_reply_text_async,
     get_replyer_id,
     get_user_name,
 )
@@ -17,7 +17,7 @@ async def generate_meme(event: AiocqhttpMessageEvent) -> bytes | None:
     """聊天记录转表情包（my_friend 模板）"""
 
     # 1. 收集素材，任何一步失败直接返回 None
-    reply_text = get_reply_text(event)
+    reply_text = await get_reply_text_async(event)
     if not reply_text:
         return None
 
@@ -30,6 +30,9 @@ async def generate_meme(event: AiocqhttpMessageEvent) -> bytes | None:
         group_id=int(event.get_group_id()),
         user_id=int(replyer_id),
     )
+    
+    # 过滤掉回复文本中的首尾空白
+    reply_text = reply_text.strip()
     
     return await generate_single_meme(event.bot, replyer_id, name, reply_text)
 
@@ -81,7 +84,7 @@ async def generate_single_meme(bot, user_id: str, name: str, text: str) -> bytes
                 texts=[text],
                 args={"name": name},
             )
-            return image
+            return image.getvalue() if hasattr(image, "getvalue") else image
         except Exception as e:
             logger.exception(f"meme 2 生成失败: {e}")
             return None

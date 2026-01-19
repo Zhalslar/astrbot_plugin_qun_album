@@ -6,7 +6,7 @@ from typing import Optional
 from aiocqhttp import CQHttp
 import aiohttp
 from astrbot.api import logger
-from astrbot.core.message.components import Image, Plain, Reply
+from astrbot.core.message.components import Image, Plain, Reply, At
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
 
@@ -93,7 +93,7 @@ def get_replyer_id(event: AiocqhttpMessageEvent) -> str | None:
         rid = reply_seg.sender_id
         return str(rid) if rid else None
 
-def get_reply_text(event: AiocqhttpMessageEvent) -> str:
+async def get_reply_text_async(event: AiocqhttpMessageEvent) -> str:
     """
     获取引用消息的文本
     """
@@ -103,7 +103,10 @@ def get_reply_text(event: AiocqhttpMessageEvent) -> str:
     if reply_seg and reply_seg.chain:
         for seg in reply_seg.chain:
             if isinstance(seg, Plain):
-                text = seg.text
+                text += seg.text
+            elif isinstance(seg, At):
+                name = getattr(seg, "name", "")
+                text += f"@{name} "
     return text
 
 async def get_user_name(client: CQHttp, user_id: int, group_id: int = 0) -> str:
@@ -118,6 +121,36 @@ async def get_user_name(client: CQHttp, user_id: int, group_id: int = 0) -> str:
             return name
     name = (await client.get_stranger_info(user_id=user_id)).get("nickname")
     return name or "未知"
+
+async def check_group_level_permission(event: AiocqhttpMessageEvent, level_threshold: int) -> tuple[bool, int]:
+    """
+    检查群成员等级权限
+    返回: (是否允许, 当前等级)
+    """
+    if level_threshold <= 0:
+        return True, 0
+    
+    try:
+        group_id = int(event.get_group_id())
+        user_id = int(event.get_sender_id())
+        info = await event.bot.get_group_member_info(
+            group_id=group_id, user_id=user_id, no_cache=True
+        )
+        level = int(info.get("level", 0))
+        role = info.get("role", "unknown")
+        
+        # 如果是管理员或群主，直接通过
+        if role in ["owner", "admin"]:
+            return True, level
+            
+        if level >= level_threshold:
+            return True, level
+            
+        return False, level
+    except Exception as e:
+        logger.warning(f"获取群成员等级失败: {e}")
+        # 获取失败时默认放行
+        return True, 0
 
 async def get_message_history(event: AiocqhttpMessageEvent, count: int) -> list[dict]:
     """
@@ -193,6 +226,22 @@ async def get_message_history(event: AiocqhttpMessageEvent, count: int) -> list[
                             for seg in raw_msg:
                                 if seg.get("type") == "text":
                                     text += seg.get("data", {}).get("text", "")
+                                elif seg.get("type") == "at":
+                                    data = seg.get('data', {})
+                                    qq = data.get('qq')
+                                    name = data.get('name')
+                                    if not name and qq:
+                                        try:
+                                            name = await get_user_name(
+                                                client=event.bot,
+                                                group_id=group_id,
+                                                user_id=int(qq),
+                                            )
+                                        except Exception:
+                                            name = str(qq)
+                                    
+                                    if name:
+                                        text += f"@{name} "
                         elif isinstance(raw_msg, str):
                             text = raw_msg
 

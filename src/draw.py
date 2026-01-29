@@ -225,6 +225,7 @@ def render_my_friend(name: str, avatar_bytes: bytes, text: str,
         lv_italic_img = lv_italic_img.crop(bbox)
         
     final_title = title
+    has_custom_title = bool(title)
     if not final_title:
         if role == "owner":
             final_title = "群主"
@@ -243,6 +244,9 @@ def render_my_friend(name: str, avatar_bytes: bytes, text: str,
                 final_title = "钻石"
             elif level >= 81:
                 final_title = "王者"
+    
+    if role == "member" and has_custom_title:
+        label_bg_color = "#d38ffe"
 
     title_img = None
     if final_title:

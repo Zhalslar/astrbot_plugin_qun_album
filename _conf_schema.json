@@ -15,5 +15,11 @@
       "step": 1
     },
     "default": 0
+  },
+  "show_title": {
+    "description": "显示头衔徽标",
+    "hint": "生成的表情包中是否显示群头衔/等级徽标",
+    "type": "bool",
+    "default": true
   }
 }

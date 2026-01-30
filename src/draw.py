@@ -164,7 +164,7 @@ def make_dialog_box(text: str, name_w: int) -> Image.Image:
     return box
 
 def render_my_friend(name: str, avatar_bytes: bytes, text: str, 
-                    role: str = "member", title: str = "", level: int = 0) -> bytes:
+                    role: str = "member", title: str = "", level: int = 0, show_title: bool = True) -> bytes:
     """渲染包含头像、头衔、等级和对话框的完整表情包"""
     
     try:
@@ -183,127 +183,136 @@ def render_my_friend(name: str, avatar_bytes: bytes, text: str,
     name_w = name_bbox[2] - name_bbox[0]
     name_h = name_bbox[3] - name_bbox[1]
     
-    label_bg_color = "#9db2e0" 
-    if role == "owner":
-        label_bg_color = "#fdd93f"
-    elif role == "admin":
-        label_bg_color = "#3fe3d8"
-        
-    label_font = load_font(32, bold=False)
-    lv_num_font = load_font(32, bold=True)
-    lv_prefix_font = load_font(28, bold=True)
+    label_img = None
+    label_w = 0
+    label_h = 0
     
-    lv_prefix = "LV"
-    lv_num = str(level)
-    
-    p_bbox = lv_prefix_font.getbbox(lv_prefix)
-    n_bbox = lv_num_font.getbbox(lv_num)
-    
-    p_w = p_bbox[2] - p_bbox[0]
-    p_h = p_bbox[3] - p_bbox[1]
-    n_w = n_bbox[2] - n_bbox[0]
-    n_h = n_bbox[3] - n_bbox[1]
-    
-    lv_w = p_w + n_w + 4
-    lv_h = max(p_h, n_h)
-    
-    buffer_w = 40
-    buffer_h = 40
-    lv_temp_img = Image.new("RGBA", (lv_w + buffer_w, lv_h + buffer_h), (0, 0, 0, 0))
-    lv_temp_draw = ImageDraw.Draw(lv_temp_img)
-    
-    n_visual_top = (lv_h + buffer_h - n_h) // 2
-    p_visual_top = n_visual_top + n_h - p_h
-    
-    lv_temp_draw.text((buffer_w // 2 - p_bbox[0], p_visual_top - p_bbox[1]), lv_prefix, font=lv_prefix_font, fill="white")
-    lv_temp_draw.text((buffer_w // 2 + p_w + 4 - n_bbox[0], n_visual_top - n_bbox[1]), lv_num, font=lv_num_font, fill="white")
-    
-    lv_italic_img = make_italic(lv_temp_img, skew_factor=0.1)
-    
-    bbox = lv_italic_img.getbbox()
-    if bbox:
-        lv_italic_img = lv_italic_img.crop(bbox)
-        
-    final_title = title
-    has_custom_title = bool(title)
-    if not final_title:
+    if show_title:
+        label_bg_color = "#9db2e0" 
         if role == "owner":
-            final_title = "群主"
+            label_bg_color = "#fdd93f"
         elif role == "admin":
-            final_title = "管理员"
-        else:
-            if 1 <= level <= 10:
-                final_title = "青铜"
-            elif 11 <= level <= 20:
-                final_title = "白银"
-            elif 21 <= level <= 40:
-                final_title = "黄金"
-            elif 41 <= level <= 60:
-                final_title = "铂金"
-            elif 61 <= level <= 80:
-                final_title = "钻石"
-            elif level >= 81:
-                final_title = "王者"
-    
-    if role == "member" and has_custom_title:
-        label_bg_color = "#d38ffe"
-
-    title_img = None
-    if final_title:
-        title_text = final_title 
-        title_bbox = label_font.getbbox(title_text)
-        title_w = title_bbox[2] - title_bbox[0]
-        title_h = title_bbox[3] - title_bbox[1]
-        
-        title_img = Image.new("RGBA", (title_w + 20, title_h + 20), (0, 0, 0, 0))
-        if Pilmoji:
-            t_ascent, t_descent = label_font.getmetrics()
-            emoji_offset_y = max(1, int(t_descent * 0.6))
-            with Pilmoji(title_img, emoji_position_offset=(0, emoji_offset_y)) as pilmoji:
-                pilmoji.text((-title_bbox[0] + 10, -title_bbox[1] + 10), title_text, font=label_font, fill="white")
-        else:
-            title_draw = ImageDraw.Draw(title_img)
-            title_draw.text((-title_bbox[0] + 10, -title_bbox[1] + 10), title_text, font=label_font, fill="white")
-        
-        bbox = title_img.getbbox()
-        if bbox:
-            title_img = title_img.crop(bbox)
+            label_bg_color = "#3fe3d8"
             
-    content_w = lv_italic_img.width
-    content_h = lv_italic_img.height
-    
-    spacing = int(label_font.getlength(" ") * 1.5)
-    
-    if title_img:
-        content_w += spacing + title_img.width
-        content_h = max(content_h, title_img.height)
+        label_font = load_font(32, bold=False)
+        lv_num_font = load_font(32, bold=True)
+        lv_prefix_font = load_font(28, bold=True)
         
-    label_padding_x = 14
-    label_padding_y = 10
-    label_w = content_w + (label_padding_x * 2)
-    label_h = content_h + (label_padding_y * 2)
+        lv_prefix = "LV"
+        lv_num = str(level)
+        
+        p_bbox = lv_prefix_font.getbbox(lv_prefix)
+        n_bbox = lv_num_font.getbbox(lv_num)
+        
+        p_w = p_bbox[2] - p_bbox[0]
+        p_h = p_bbox[3] - p_bbox[1]
+        n_w = n_bbox[2] - n_bbox[0]
+        n_h = n_bbox[3] - n_bbox[1]
+        
+        lv_w = p_w + n_w + 4
+        lv_h = max(p_h, n_h)
+        
+        buffer_w = 40
+        buffer_h = 40
+        lv_temp_img = Image.new("RGBA", (lv_w + buffer_w, lv_h + buffer_h), (0, 0, 0, 0))
+        lv_temp_draw = ImageDraw.Draw(lv_temp_img)
+        
+        n_visual_top = (lv_h + buffer_h - n_h) // 2
+        p_visual_top = n_visual_top + n_h - p_h
+        
+        lv_temp_draw.text((buffer_w // 2 - p_bbox[0], p_visual_top - p_bbox[1]), lv_prefix, font=lv_prefix_font, fill="white")
+        lv_temp_draw.text((buffer_w // 2 + p_w + 4 - n_bbox[0], n_visual_top - n_bbox[1]), lv_num, font=lv_num_font, fill="white")
+        
+        lv_italic_img = make_italic(lv_temp_img, skew_factor=0.1)
+        
+        bbox = lv_italic_img.getbbox()
+        if bbox:
+            lv_italic_img = lv_italic_img.crop(bbox)
+            
+        final_title = title
+        has_custom_title = bool(title)
+        if not final_title:
+            if role == "owner":
+                final_title = "群主"
+            elif role == "admin":
+                final_title = "管理员"
+            else:
+                if 1 <= level <= 10:
+                    final_title = "青铜"
+                elif 11 <= level <= 20:
+                    final_title = "白银"
+                elif 21 <= level <= 40:
+                    final_title = "黄金"
+                elif 41 <= level <= 60:
+                    final_title = "铂金"
+                elif 61 <= level <= 80:
+                    final_title = "钻石"
+                elif level >= 81:
+                    final_title = "王者"
+        
+        if role == "member" and has_custom_title:
+            label_bg_color = "#d38ffe"
     
-    label_img = Image.new("RGBA", (int(label_w), int(label_h)), (0, 0, 0, 0))
-    label_draw = ImageDraw.Draw(label_img)
-    draw_rounded_rectangle(label_draw, (0, 0, label_w, label_h), 12, fill=label_bg_color)
-    
-    current_x = (label_w - content_w) / 2
-    
-    lv_y = (label_h - lv_italic_img.height) / 2
-    label_img.paste(lv_italic_img, (int(current_x), int(lv_y)), mask=lv_italic_img)
-    current_x += lv_italic_img.width
-    
-    if title_img:
-        current_x += spacing 
-        title_y = (label_h - title_img.height) / 2
-        label_img.paste(title_img, (int(current_x), int(title_y)), mask=title_img)
+        title_img = None
+        if final_title:
+            title_text = final_title 
+            title_bbox = label_font.getbbox(title_text)
+            title_w = title_bbox[2] - title_bbox[0]
+            title_h = title_bbox[3] - title_bbox[1]
+            
+            title_img = Image.new("RGBA", (title_w + 20, title_h + 20), (0, 0, 0, 0))
+            if Pilmoji:
+                t_ascent, t_descent = label_font.getmetrics()
+                emoji_offset_y = max(1, int(t_descent * 0.6))
+                with Pilmoji(title_img, emoji_position_offset=(0, emoji_offset_y)) as pilmoji:
+                    pilmoji.text((-title_bbox[0] + 10, -title_bbox[1] + 10), title_text, font=label_font, fill="white")
+            else:
+                title_draw = ImageDraw.Draw(title_img)
+                title_draw.text((-title_bbox[0] + 10, -title_bbox[1] + 10), title_text, font=label_font, fill="white")
+            
+            bbox = title_img.getbbox()
+            if bbox:
+                title_img = title_img.crop(bbox)
+                
+        content_w = lv_italic_img.width
+        content_h = lv_italic_img.height
+        
+        spacing = int(label_font.getlength(" ") * 1.5)
+        
+        if title_img:
+            content_w += spacing + title_img.width
+            content_h = max(content_h, title_img.height)
+            
+        label_padding_x = 14
+        label_padding_y = 10
+        label_w = content_w + (label_padding_x * 2)
+        label_h = content_h + (label_padding_y * 2)
+        
+        label_img = Image.new("RGBA", (int(label_w), int(label_h)), (0, 0, 0, 0))
+        label_draw = ImageDraw.Draw(label_img)
+        draw_rounded_rectangle(label_draw, (0, 0, label_w, label_h), 12, fill=label_bg_color)
+        
+        current_x = (label_w - content_w) / 2
+        
+        lv_y = (label_h - lv_italic_img.height) / 2
+        label_img.paste(lv_italic_img, (int(current_x), int(lv_y)), mask=lv_italic_img)
+        current_x += lv_italic_img.width
+        
+        if title_img:
+            current_x += spacing 
+            title_y = (label_h - title_img.height) / 2
+            label_img.paste(title_img, (int(current_x), int(title_y)), mask=title_img)
     
     bubble_x = 165
     badge_x = 195
     
     box_img = make_dialog_box(text, 0)
     
-    name_x = badge_x + label_w + 10
+    if show_title and label_img:
+        name_x = badge_x + label_w + 10
+    else:
+        name_x = badge_x
+        
     name_end_x = name_x + name_w
     bubble_end_x = bubble_x + box_img.width
     
@@ -313,7 +322,8 @@ def render_my_friend(name: str, avatar_bytes: bytes, text: str,
     
     canvas.paste(avatar, (20, 20), mask=avatar)
     canvas.paste(box_img, (bubble_x, 82), mask=box_img)
-    canvas.paste(label_img, (badge_x, 25), mask=label_img)
+    if show_title and label_img:
+        canvas.paste(label_img, (badge_x, 25), mask=label_img)
     
     name_draw_y = 20 + (35 - name_h) // 2
     
@@ -331,7 +341,29 @@ def render_my_friend(name: str, avatar_bytes: bytes, text: str,
     return output.getvalue()
 
 
-async def generate_meme(event: AiocqhttpMessageEvent) -> bytes | None:
+async def generate_single_meme(bot, user_id: str, text: str, info: dict, show_title: bool = True) -> bytes | None:
+    """获取头像并生成单张表情包"""
+    avatar = await get_avatar(user_id)
+    if not avatar:
+        return None
+
+    try:
+        img_bytes = render_my_friend(
+            name=info["nickname"],
+            avatar_bytes=avatar,
+            text=text,
+            role=info["role"],
+            title=info["title"],
+            level=info["level"],
+            show_title=show_title
+        )
+        return img_bytes
+    except Exception as e:
+        logger.exception(f"渲染失败: {e}")
+        return None
+
+
+async def generate_meme(event: AiocqhttpMessageEvent, show_title: bool = True) -> bytes | None:
     """处理消息事件并生成单张表情包"""
     reply_text = await get_reply_text_async(event)
     if not reply_text:
@@ -348,29 +380,10 @@ async def generate_meme(event: AiocqhttpMessageEvent) -> bytes | None:
     
     text = reply_text.strip()
     
-    return await generate_single_meme(event.bot, replyer_id, text, info)
+    return await generate_single_meme(event.bot, replyer_id, text, info, show_title=show_title)
 
-async def generate_single_meme(bot, user_id: str, text: str, info: dict) -> bytes | None:
-    """获取头像并生成单张表情包"""
-    avatar = await get_avatar(user_id)
-    if not avatar:
-        return None
 
-    try:
-        img_bytes = render_my_friend(
-            name=info["nickname"],
-            avatar_bytes=avatar,
-            text=text,
-            role=info["role"],
-            title=info["title"],
-            level=info["level"]
-        )
-        return img_bytes
-    except Exception as e:
-        logger.exception(f"渲染失败: {e}")
-        return None
-
-async def generate_stitched_meme(event: AiocqhttpMessageEvent, messages: list[dict]) -> bytes | None:
+async def generate_stitched_meme(event: AiocqhttpMessageEvent, messages: list[dict], show_title: bool = True) -> bytes | None:
     """处理多条消息并生成垂直拼接的表情包"""
     images = []
     group_id = int(event.get_group_id())
@@ -381,7 +394,7 @@ async def generate_stitched_meme(event: AiocqhttpMessageEvent, messages: list[di
         
         info = await get_member_rich_info(event.bot, group_id, int(user_id))
         
-        img_bytes = await generate_single_meme(event.bot, user_id, text, info)
+        img_bytes = await generate_single_meme(event.bot, user_id, text, info, show_title=show_title)
         if img_bytes:
             images.append(Image.open(io.BytesIO(img_bytes)))
     

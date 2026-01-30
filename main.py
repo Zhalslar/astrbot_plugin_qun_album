@@ -16,7 +16,7 @@ from .src.utils import get_first_image, get_message_history, check_group_level_p
     "astrbot_plugin_qun_album",
     "Zhalslar&Foolllll",
     "群相册插件，记录群友怪话",
-    "1.2.0",
+    "1.1.1",
 )
 class AdminPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -63,6 +63,7 @@ class AdminPlugin(Star):
 
         # 检查群等级
         level_threshold = self.conf.get("level_threshold", 0)
+        show_title = self.conf.get("show_title", True)
         
         is_allowed, current_level = await check_group_level_permission(
             event,
@@ -79,9 +80,10 @@ class AdminPlugin(Star):
             if not messages:
                 yield event.plain_result("获取历史消息失败，请确保是回复消息且消息存在")
                 return
-            image = await generate_stitched_meme(event, messages)
+            
+            image = await generate_stitched_meme(event, messages, show_title=show_title)
         else:
-            image = await get_first_image(event) or await generate_meme(event)
+            image = await get_first_image(event) or await generate_meme(event, show_title=show_title)
             
         if not image:
             yield event.plain_result("需引用图片/文字")

@@ -1,6 +1,33 @@
 
 from datetime import datetime
 import os
+
+try:
+    import emoji
+    from emoji import unicode_codes
+
+    if not hasattr(unicode_codes, 'get_emoji_unicode_dict'):
+        def get_emoji_unicode_dict(lang):
+            return {data[lang]: char for char, data in emoji.EMOJI_DATA.items() if lang in data}
+        unicode_codes.get_emoji_unicode_dict = get_emoji_unicode_dict
+    
+    if not hasattr(unicode_codes, 'EMOJI_UNICODE'):
+        unicode_codes.EMOJI_UNICODE = {'en': get_emoji_unicode_dict('en')}
+
+    if not hasattr(emoji, 'get_emoji_regexp'):
+        import re
+        _emoji_regexp = None
+        def get_emoji_regexp():
+            global _emoji_regexp
+            if _emoji_regexp is None:
+                emojis = sorted(emoji.EMOJI_DATA.keys(), key=len, reverse=True)
+                pattern = '|'.join(re.escape(e) for e in emojis)
+                _emoji_regexp = re.compile(pattern)
+            return _emoji_regexp
+        emoji.get_emoji_regexp = get_emoji_regexp
+except ImportError:
+    pass
+
 from astrbot import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools, register
@@ -16,7 +43,7 @@ from .src.utils import get_first_image, get_message_history, check_group_level_p
     "astrbot_plugin_qun_album",
     "Zhalslar&Foolllll",
     "群相册插件，记录群友怪话",
-    "1.1.1",
+    "1.1.2",
 )
 class AdminPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):

@@ -2,6 +2,6 @@ name: astrbot_plugin_qun_album # 这是你的插件的唯一识别名。
 display_name: 群相册插件
 desc: "[仅napcat] 群相册插件，记录群友怪话" # 插件简短描述
 help: 略  # 插件的帮助信息
-version: v1.1.2 # 插件版本号。格式：v1.1.1 或者 v1.1
+version: v1.1.3 # 插件版本号。格式：v1.1.1 或者 v1.1
 author: Zhalslar&Foolllll # 作者
 repo: https://github.com/Zhalslar/astrbot_plugin_qun_album

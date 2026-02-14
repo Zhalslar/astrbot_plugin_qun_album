@@ -73,7 +73,8 @@ def wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[s
 def pad_emojis(text: str) -> str:
     try:
         import emoji
-        return emoji.replace_emoji(text, replace=lambda chars, data: f" {chars} ")
+        pattern = emoji.get_emoji_regexp()
+        return re.sub(pattern, lambda m: f" {m.group(0)} ", text)
     except Exception:
         return text
 

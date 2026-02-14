@@ -6,7 +6,7 @@ from typing import Optional
 from aiocqhttp import CQHttp
 import aiohttp
 from astrbot.api import logger
-from astrbot.core.message.components import Image, Plain, Reply, At
+from astrbot.core.message.components import Image, Plain, Reply, At, File
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
 
@@ -73,6 +73,15 @@ async def get_first_image(event: AstrMessageEvent) -> bytes | None:
                     return img
                 if seg.file and (img := await load_bytes(seg.file)):
                     return img
+            elif isinstance(seg, File):
+                # 检查是否为图片文件
+                if seg.name and seg.name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+                    try:
+                        local_path = await seg.get_file()
+                        if local_path and Path(local_path).exists():
+                            return Path(local_path).read_bytes()
+                    except Exception as e:
+                        logger.error(f"从文件组件获取图片失败: {e}")
 
     # ---------- 2. 再看当前消息 ----------
     for seg in event.get_messages():
@@ -81,6 +90,15 @@ async def get_first_image(event: AstrMessageEvent) -> bytes | None:
                 return img
             if seg.file and (img := await load_bytes(seg.file)):
                 return img
+        elif isinstance(seg, File):
+             # 检查是否为图片文件
+            if seg.name and seg.name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+                try:
+                    local_path = await seg.get_file()
+                    if local_path and Path(local_path).exists():
+                        return Path(local_path).read_bytes()
+                except Exception as e:
+                    logger.error(f"从文件组件获取图片失败: {e}")
 
 
 def get_replyer_id(event: AiocqhttpMessageEvent) -> str | None:
@@ -107,6 +125,8 @@ async def get_reply_text_async(event: AiocqhttpMessageEvent) -> str:
             elif isinstance(seg, At):
                 name = getattr(seg, "name", "")
                 text += f"@{name} "
+            elif isinstance(seg, File):
+                text += f"[文件: {seg.name}]"
     return text
 
 async def get_user_name(client: CQHttp, user_id: int, group_id: int = 0) -> str:
@@ -242,6 +262,9 @@ async def get_message_history(event: AiocqhttpMessageEvent, count: int) -> list[
                                     
                                     if name:
                                         text += f"@{name} "
+                                elif seg.get("type") == "file":
+                                    file_name = seg.get("data", {}).get("file", "未知文件")
+                                    text += f"[文件: {file_name}]"
                         elif isinstance(raw_msg, str):
                             text = raw_msg
 

@@ -2,13 +2,80 @@
 import base64
 from pathlib import Path
 import random
-from typing import Optional
+from typing import Any, Optional
 from aiocqhttp import CQHttp
 import aiohttp
 from astrbot.api import logger
 from astrbot.core.message.components import Image, Plain, Reply, At, File
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
+
+
+def normalize_album_list_response(payload: Any) -> list[dict]:
+    """兼容旧版 list 返回和新版 data.album_list/list 包装格式。"""
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+
+    data = payload.get("data")
+    if isinstance(data, dict):
+        album_list = data.get("album_list") or data.get("list")
+        if isinstance(album_list, list):
+            return [item for item in album_list if isinstance(item, dict)]
+
+    album_list = payload.get("album_list") or payload.get("list")
+    if isinstance(album_list, list):
+        return [item for item in album_list if isinstance(item, dict)]
+    return []
+
+
+async def upload_album_image_with_fallback(
+    event: AiocqhttpMessageEvent,
+    raw_group_id: int,
+    raw_album_id: Any,
+    album_name: str,
+    save_path: Path,
+) -> None:
+    """
+    兼容旧版和新版 NapCat 的群相册上传参数。
+    """
+    file_path = str(save_path.absolute())
+    file_uri = f"file://{save_path.absolute()}"
+    file_base64 = f"base64://{base64.b64encode(save_path.read_bytes()).decode('ascii')}"
+    candidates = [
+        ("group=int|album_id=str|album_name=str|file=raw_path", raw_group_id, str(raw_album_id), str(album_name), file_path),
+        ("group=int|album_id=str|album_name=str|file=base64", raw_group_id, str(raw_album_id), str(album_name), file_base64),
+        ("group=int|album_id=str|album_name=str|file=file_uri", raw_group_id, str(raw_album_id), str(album_name), file_uri),
+    ]
+
+    last_error = None
+    failure_modes: list[tuple[str, str]] = []
+    for mode, group_value, album_id_value, album_name_value, file_value in candidates:
+        logger.debug(
+            "[qun_album] 尝试上传群相册图片: "
+            f"模式={mode}, group_id={group_value}({type(group_value).__name__}), "
+            f"album_id={album_id_value}({type(album_id_value).__name__}), "
+            f"album_name={album_name_value}({type(album_name_value).__name__}), "
+            f"file_type={type(file_value).__name__}, file_preview={file_value[:120]}"
+        )
+        try:
+            await event.bot.upload_image_to_qun_album(
+                group_id=group_value,
+                album_id=album_id_value,
+                album_name=album_name_value,
+                file=file_value,
+            )
+            logger.debug(f"[qun_album] 上传群相册成功，使用模式: {mode}")
+            return
+        except Exception as e:
+            last_error = e
+            failure_modes.append((mode, str(e)))
+            logger.warning(f"[qun_album] 上传群相册失败，模式={mode}: {e}")
+
+    if failure_modes:
+        logger.debug(f"[qun_album] 各上传模式失败详情: {failure_modes}")
+    raise last_error
 
 
 async def download_image(url: str, http: bool = True) -> bytes | None:

@@ -36,6 +36,7 @@ async def upload_album_image_with_fallback(
     raw_album_id: Any,
     album_name: str,
     save_path: Path,
+    is_llbot: bool = False,
 ) -> None:
     """
     兼容旧版和新版 NapCat 的群相册上传参数。
@@ -43,6 +44,41 @@ async def upload_album_image_with_fallback(
     file_path = str(save_path.absolute())
     file_uri = f"file://{save_path.absolute()}"
     file_base64 = f"base64://{base64.b64encode(save_path.read_bytes()).decode('ascii')}"
+
+    if is_llbot:
+        candidates = [
+            ("group=int|album_id=str|files=[raw_path]", [file_path]),
+            ("group=int|album_id=str|files=[file_uri]", [file_uri]),
+            ("group=int|album_id=str|files=[base64]", [file_base64]),
+        ]
+
+        last_error = None
+        failure_modes: list[tuple[str, str]] = []
+        for mode, files_value in candidates:
+            logger.debug(
+                "[qun_album] 尝试上传群相册图片(llbot) "
+                f"模式={mode}, group_id={raw_group_id}({type(raw_group_id).__name__}), "
+                f"album_id={raw_album_id}({type(raw_album_id).__name__}), "
+                f"files_preview={files_value[0][:120]}"
+            )
+            try:
+                await event.bot.api.call_action(
+                    "upload_group_album",
+                    group_id=raw_group_id,
+                    album_id=str(raw_album_id),
+                    files=files_value,
+                )
+                logger.debug(f"[qun_album] 上传群相册成功，使用 llbot 模式: {mode}")
+                return
+            except Exception as e:
+                last_error = e
+                failure_modes.append((mode, str(e)))
+                logger.warning(f"[qun_album] 上传群相册失败(llbot)，模式={mode}: {e}")
+
+        if failure_modes:
+            logger.debug(f"[qun_album] llbot 各上传模式失败详情: {failure_modes}")
+        raise last_error
+
     candidates = [
         ("group=int|album_id=str|album_name=str|file=raw_path", raw_group_id, str(raw_album_id), str(album_name), file_path),
         ("group=int|album_id=str|album_name=str|file=base64", raw_group_id, str(raw_album_id), str(album_name), file_base64),

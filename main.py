@@ -1,40 +1,13 @@
-
 from datetime import datetime
 import os
-
-try:
-    import emoji
-    from emoji import unicode_codes
-
-    if not hasattr(unicode_codes, 'get_emoji_unicode_dict'):
-        def get_emoji_unicode_dict(lang):
-            return {data[lang]: char for char, data in emoji.EMOJI_DATA.items() if lang in data}
-        unicode_codes.get_emoji_unicode_dict = get_emoji_unicode_dict
-    
-    if not hasattr(unicode_codes, 'EMOJI_UNICODE'):
-        unicode_codes.EMOJI_UNICODE = {'en': get_emoji_unicode_dict('en')}
-
-    if not hasattr(emoji, 'get_emoji_regexp'):
-        import re
-        _emoji_regexp = None
-        def get_emoji_regexp():
-            global _emoji_regexp
-            if _emoji_regexp is None:
-                emojis = sorted(emoji.EMOJI_DATA.keys(), key=len, reverse=True)
-                pattern = '|'.join(re.escape(e) for e in emojis)
-                _emoji_regexp = re.compile(pattern)
-            return _emoji_regexp
-        emoji.get_emoji_regexp = get_emoji_regexp
-except ImportError:
-    pass
+import re
 
 from astrbot import logger
 from astrbot.api.event import filter
-from astrbot.api.star import Context, Star, StarTools, register
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.core import AstrBotConfig
-from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
-    AiocqhttpMessageEvent,
-)
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
+
 from .src.draw import generate_meme, generate_stitched_meme
 from .src.utils import (
     check_group_level_permission,
@@ -44,26 +17,87 @@ from .src.utils import (
     upload_album_image_with_fallback,
 )
 
+try:
+    import emoji
+    from emoji import unicode_codes
+
+    if not hasattr(unicode_codes, "get_emoji_unicode_dict"):
+        def get_emoji_unicode_dict(lang):
+            return {
+                data[lang]: char
+                for char, data in emoji.EMOJI_DATA.items()
+                if lang in data
+            }
+        
+        unicode_codes.get_emoji_unicode_dict = get_emoji_unicode_dict
+
+    if not hasattr(unicode_codes, "EMOJI_UNICODE"):
+        unicode_codes.EMOJI_UNICODE = {"en": get_emoji_unicode_dict("en")}
+
+    if not hasattr(emoji, "get_emoji_regexp"):
+        _emoji_regexp = None
+
+        def get_emoji_regexp():
+            global _emoji_regexp
+            if _emoji_regexp is None:
+                emojis = sorted(emoji.EMOJI_DATA.keys(), key=len, reverse=True)
+                pattern = "|".join(re.escape(e) for e in emojis)
+                _emoji_regexp = re.compile(pattern)
+            return _emoji_regexp
+        emoji.get_emoji_regexp = get_emoji_regexp
+
+except ImportError:
+    pass
+
 
 class AdminPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.conf = config
         self.plugin_data_dir = StarTools.get_data_dir("astrbot_plugin_qun_album")
+        self._is_llbot = False
+
+    async def initialize(self) -> None:
+        try:
+            platform = self.context.get_platform_inst("aiocqhttp")
+            if platform is None:
+                platform = self.context.get_platform(filter.PlatformAdapterType.AIOCQHTTP)
+            if platform is None:
+                logger.debug("[qun_album] 启动时未找到 aiocqhttp 平台，跳过协议端探测")
+                return
+
+            version_info = await platform.get_client().get_version_info()
+            logger.info(
+                f"[qun_album] get_version_info raw response: "
+                f"type={type(version_info).__name__}, payload={version_info!r}"
+            )
+            app_name = version_info.get("app_name") if isinstance(version_info, dict) else None
+            self._is_llbot = app_name == "LLOneBot"
+        except Exception as e:
+            self._is_llbot = False
+            logger.warning(f"[qun_album] 启动时探测协议端失败，默认按 NapCat 处理: {e}")
 
     async def _get_album_by_name(
         self, event: AiocqhttpMessageEvent, name: str | None = None
     ) -> dict | None:
-        raw_album_list = await event.bot.get_qun_album_list(
-            group_id=int(event.get_group_id())
-        )
+        group_id = int(event.get_group_id())
+        if self._is_llbot:
+            raw_album_list = await event.bot.api.call_action(
+                "get_group_album_list",
+                group_id=group_id,
+            )
+        else:
+            raw_album_list = await event.bot.get_qun_album_list(group_id=group_id)
+
         album_list = normalize_album_list_response(raw_album_list)
         if not album_list:
             return None
         if not name:
             return album_list[0]
+
         for album in album_list:
-            if album["name"] == name:
+            album_name = album.get("name") or album.get("album_name")
+            if album_name == name:
                 return album
         return None
 
@@ -72,10 +106,10 @@ class AdminPlugin(Star):
     async def upload_qun_album(self, event: AiocqhttpMessageEvent):
         """上传群相册"""
         parts = event.message_str.strip().split()
-        
+
         real_count = None
         real_album_name = None
-        
+
         if len(parts) >= 3:
             if parts[-1].isdigit():
                 real_count = int(parts[-1])
@@ -84,38 +118,43 @@ class AdminPlugin(Star):
                 real_album_name = " ".join(parts[1:])
         elif len(parts) == 2:
             real_album_name = parts[1]
-            
+
         album = await self._get_album_by_name(event, real_album_name)
         if not album:
             yield event.plain_result("该相册不存在")
             return
 
-        # 检查群等级
         album_id = album.get("album_id")
-        resolved_album_name = album.get("name") or real_album_name or ""
+        resolved_album_name = (
+            album.get("name") or album.get("album_name") or real_album_name or ""
+        )
         level_threshold = self.conf.get("level_threshold", 0)
         show_title = self.conf.get("show_title", True)
-        
+
         is_allowed, current_level = await check_group_level_permission(
             event,
-            level_threshold
+            level_threshold,
         )
-        
+
         if not is_allowed:
-            yield event.plain_result(f"你的群等级 ({current_level}) 不足，需要达到 {level_threshold} 级才能使用此指令")
+            yield event.plain_result(
+                f"你的群等级({current_level})不足，需要达到 {level_threshold} 级才能使用此指令"
+            )
             return
 
         if real_count:
-            # 获取历史记录并生成拼接图
             messages = await get_message_history(event, real_count)
             if not messages:
                 yield event.plain_result("获取历史消息失败，请确保是回复消息且消息存在")
                 return
-            
-            image = await generate_stitched_meme(event, messages, show_title=show_title)
+            image = await generate_stitched_meme(
+                event, messages, show_title=show_title
+            )
         else:
-            image = await get_first_image(event) or await generate_meme(event, show_title=show_title)
-            
+            image = await get_first_image(event) or await generate_meme(
+                event, show_title=show_title
+            )
+
         if not image:
             yield event.plain_result("需引用图片/文字")
             return
@@ -134,6 +173,7 @@ class AdminPlugin(Star):
             raw_album_id=album_id,
             album_name=resolved_album_name,
             save_path=save_path,
+            is_llbot=self._is_llbot,
         )
         event.stop_event()
         logger.info("上传群相册成功")

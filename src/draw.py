@@ -149,7 +149,6 @@ def make_dialog_box(text: str, name_w: int) -> Image.Image:
     
     current_y = text_start_y
     if Pilmoji:
-        logger.debug("pilmoji")
         emoji_offset_y = max(1, int(descent * 0.9))
         with Pilmoji(box, emoji_position_offset=(0, emoji_offset_y)) as pilmoji:
             for line in lines:

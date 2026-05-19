@@ -56,30 +56,36 @@ class AdminPlugin(Star):
         self.conf = config
         self.plugin_data_dir = StarTools.get_data_dir("astrbot_plugin_qun_album")
         self._is_llbot = False
+        self._backend_client_id: int | None = None
 
-    async def initialize(self) -> None:
+    async def _ensure_backend_detected(self, client) -> None:
+        if client is None:
+            return
+
+        client_id = id(client)
+        if self._backend_client_id == client_id:
+            return
+
+        self._backend_client_id = client_id
+        self._is_llbot = False
+
         try:
-            platform = self.context.get_platform_inst("aiocqhttp")
-            if platform is None:
-                platform = self.context.get_platform(filter.PlatformAdapterType.AIOCQHTTP)
-            if platform is None:
-                logger.debug("[qun_album] 启动时未找到 aiocqhttp 平台，跳过协议端探测")
-                return
-
-            version_info = await platform.get_client().get_version_info()
-            logger.info(
-                f"[qun_album] get_version_info raw response: "
-                f"type={type(version_info).__name__}, payload={version_info!r}"
-            )
+            version_info = await client.api.call_action("get_version_info")
             app_name = version_info.get("app_name") if isinstance(version_info, dict) else None
+            if app_name is None and isinstance(version_info, dict) and isinstance(version_info.get("data"), dict):
+                app_name = version_info["data"].get("app_name")
             self._is_llbot = app_name == "LLOneBot"
+            logger.debug(
+                f"[qun_album] 懒探测协议端完成: "
+                f"app_name={app_name or 'unknown'}, backend={'llbot' if self._is_llbot else 'napcat'}"
+            )
         except Exception as e:
-            self._is_llbot = False
-            logger.warning(f"[qun_album] 启动时探测协议端失败，默认按 NapCat 处理: {e}")
+            logger.warning(f"[qun_album] 懒探测协议端失败，默认按 NapCat 处理: {e}")
 
     async def _get_album_by_name(
         self, event: AiocqhttpMessageEvent, name: str | None = None
     ) -> dict | None:
+        await self._ensure_backend_detected(getattr(event, "bot", None))
         group_id = int(event.get_group_id())
         if self._is_llbot:
             raw_album_list = await event.bot.api.call_action(
@@ -105,6 +111,7 @@ class AdminPlugin(Star):
     @filter.command("上传群相册", alias={"up"})
     async def upload_qun_album(self, event: AiocqhttpMessageEvent):
         """上传群相册"""
+        await self._ensure_backend_detected(getattr(event, "bot", None))
         parts = event.message_str.strip().split()
 
         real_count = None

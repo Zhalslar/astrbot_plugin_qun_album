@@ -1,13 +1,43 @@
 {
-  "save_image": {
-    "description": "保存图片",
-    "hint": "保存目录为插件数据目录",
+  "default_albums": {
+    "description": "群默认上传相册",
+    "hint": "配置不同群的默认上传相册名，上传时未指定相册名将自动使用此配置。",
+    "type": "template_list",
+    "default": [],
+    "templates": {
+      "default": {
+        "name": "群默认相册",
+        "display_item": "group_id",
+        "items": {
+          "group_id": {
+            "description": "群号",
+            "type": "string",
+            "default": ""
+          },
+          "album_name": {
+            "description": "相册名",
+            "type": "string",
+            "default": ""
+          }
+        }
+      }
+    }
+  },
+  "backup_media": {
+    "description": "备份上传的媒体",
+    "hint": "开启后按 群号/相册ID 目录结构保存到插件数据目录中。",
     "type": "bool",
     "default": false
   },
+  "random_album_groups": {
+    "description": "随机媒体启用群列表",
+    "hint": "填入启用随机相册媒体发送功能的群号。空列表不启用。",
+    "type": "list",
+    "default": []
+  },
   "level_threshold": {
     "description": "群等级限制",
-    "hint": "设置使用指令所需的最低群等级，0 为不限制",
+    "hint": "设置使用指令所需的最低群等级，0 为不限制。",
     "type": "int",
     "slider": {
       "min": 0,
@@ -18,7 +48,7 @@
   },
   "show_title": {
     "description": "显示头衔徽标",
-    "hint": "生成的表情包中是否显示群头衔/等级徽标",
+    "hint": "开启后，生成的消息截图中会显示群头衔/等级徽标。",
     "type": "bool",
     "default": true
   }

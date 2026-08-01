@@ -1,4 +1,3 @@
-
 import base64
 from pathlib import Path
 import random
@@ -8,92 +7,109 @@ import aiohttp
 from astrbot.api import logger
 from astrbot.core.message.components import Image, Plain, Reply, At, File
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
+    AiocqhttpMessageEvent,
+)
+
+from PIL import Image as PILImage
+import io
+
+
+ILLEGAL_CHARS = frozenset('\\/:*?"<>|')
+
+
+def sanitize_filename(name: str, fallback: str = "default") -> str:
+    if not name or not name.strip():
+        return fallback
+    cleaned = "".join("_" if c in ILLEGAL_CHARS or ord(c) < 32 else c for c in name)
+    cleaned = cleaned.strip()
+    return cleaned if cleaned else fallback
+
+
+def detect_image_ext(data: bytes, fallback: str = "png") -> str:
+    try:
+        img = PILImage.open(io.BytesIO(data))
+        fmt = (img.format or "").lower()
+        return {"jpeg": "jpg", "tiff": "tif"}.get(fmt, fmt) if fmt else fallback
+    except Exception:
+        return fallback
+
+
+def _normalize_album_item(item: dict) -> dict:
+    if "id" in item and "album_id" not in item:
+        item["album_id"] = item["id"]
+    return item
 
 
 def normalize_album_list_response(payload: Any) -> list[dict]:
     """兼容旧版 list 返回和新版 data.album_list/list 包装格式。"""
     if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
+        return [
+            _normalize_album_item(item) for item in payload if isinstance(item, dict)
+        ]
     if not isinstance(payload, dict):
         return []
 
     data = payload.get("data")
+    if isinstance(data, list):
+        return [_normalize_album_item(item) for item in data if isinstance(item, dict)]
     if isinstance(data, dict):
         album_list = data.get("album_list") or data.get("list")
         if isinstance(album_list, list):
-            return [item for item in album_list if isinstance(item, dict)]
+            return [
+                _normalize_album_item(item)
+                for item in album_list
+                if isinstance(item, dict)
+            ]
 
     album_list = payload.get("album_list") or payload.get("list")
     if isinstance(album_list, list):
-        return [item for item in album_list if isinstance(item, dict)]
+        return [
+            _normalize_album_item(item) for item in album_list if isinstance(item, dict)
+        ]
     return []
 
 
-async def upload_album_image_with_fallback(
+async def _upload_napcat(
     event: AiocqhttpMessageEvent,
     raw_group_id: int,
     raw_album_id: Any,
     album_name: str,
-    save_path: Path,
-    is_llbot: bool = False,
+    file_path: str,
+    file_base64: str,
+    file_uri: str,
 ) -> None:
-    """
-    兼容旧版和新版 NapCat 的群相册上传参数。
-    """
-    file_path = str(save_path.absolute())
-    file_uri = f"file://{save_path.absolute()}"
-    file_base64 = f"base64://{base64.b64encode(save_path.read_bytes()).decode('ascii')}"
-
-    if is_llbot:
-        candidates = [
-            ("group=int|album_id=str|files=[raw_path]", [file_path]),
-            ("group=int|album_id=str|files=[file_uri]", [file_uri]),
-            ("group=int|album_id=str|files=[base64]", [file_base64]),
-        ]
-
-        last_error = None
-        failure_modes: list[tuple[str, str]] = []
-        for mode, files_value in candidates:
-            logger.debug(
-                "[qun_album] 尝试上传群相册图片(llbot) "
-                f"模式={mode}, group_id={raw_group_id}({type(raw_group_id).__name__}), "
-                f"album_id={raw_album_id}({type(raw_album_id).__name__}), "
-                f"files_preview={files_value[0][:120]}"
-            )
-            try:
-                await event.bot.api.call_action(
-                    "upload_group_album",
-                    group_id=raw_group_id,
-                    album_id=str(raw_album_id),
-                    files=files_value,
-                )
-                logger.debug(f"[qun_album] 上传群相册成功，使用 llbot 模式: {mode}")
-                return
-            except Exception as e:
-                last_error = e
-                failure_modes.append((mode, str(e)))
-                logger.warning(f"[qun_album] 上传群相册失败(llbot)，模式={mode}: {e}")
-
-        if failure_modes:
-            logger.debug(f"[qun_album] llbot 各上传模式失败详情: {failure_modes}")
-        raise last_error
-
     candidates = [
-        ("group=int|album_id=str|album_name=str|file=raw_path", raw_group_id, str(raw_album_id), str(album_name), file_path),
-        ("group=int|album_id=str|album_name=str|file=base64", raw_group_id, str(raw_album_id), str(album_name), file_base64),
-        ("group=int|album_id=str|album_name=str|file=file_uri", raw_group_id, str(raw_album_id), str(album_name), file_uri),
+        (
+            "group=int|album_id=str|album_name=str|file=raw_path",
+            raw_group_id,
+            str(raw_album_id),
+            str(album_name),
+            file_path,
+        ),
+        (
+            "group=int|album_id=str|album_name=str|file=base64",
+            raw_group_id,
+            str(raw_album_id),
+            str(album_name),
+            file_base64,
+        ),
+        (
+            "group=int|album_id=str|album_name=str|file=file_uri",
+            raw_group_id,
+            str(raw_album_id),
+            str(album_name),
+            file_uri,
+        ),
     ]
-
     last_error = None
     failure_modes: list[tuple[str, str]] = []
     for mode, group_value, album_id_value, album_name_value, file_value in candidates:
         logger.debug(
-            "[qun_album] 尝试上传群相册图片: "
-            f"模式={mode}, group_id={group_value}({type(group_value).__name__}), "
-            f"album_id={album_id_value}({type(album_id_value).__name__}), "
-            f"album_name={album_name_value}({type(album_name_value).__name__}), "
-            f"file_type={type(file_value).__name__}, file_preview={file_value[:120]}"
+            "[qun_album] 尝试上传群相册图片(napcat) "
+            f"模式={mode}, group_id={group_value}, "
+            f"album_id={album_id_value}, album_name={album_name_value}, "
+            f"file_preview={file_value[:120]}"
         )
         try:
             await event.bot.upload_image_to_qun_album(
@@ -102,16 +118,140 @@ async def upload_album_image_with_fallback(
                 album_name=album_name_value,
                 file=file_value,
             )
-            logger.debug(f"[qun_album] 上传群相册成功，使用模式: {mode}")
+            logger.debug(f"[qun_album] 上传群相册成功(napcat)，模式: {mode}")
             return
         except Exception as e:
             last_error = e
             failure_modes.append((mode, str(e)))
-            logger.warning(f"[qun_album] 上传群相册失败，模式={mode}: {e}")
-
+            logger.warning(f"[qun_album] 上传群相册失败(napcat)，模式={mode}: {e}")
     if failure_modes:
-        logger.debug(f"[qun_album] 各上传模式失败详情: {failure_modes}")
+        logger.debug(f"[qun_album] napcat 各上传模式失败详情: {failure_modes}")
     raise last_error
+
+
+async def _upload_snowluma(
+    event: AiocqhttpMessageEvent,
+    raw_group_id: int,
+    raw_album_id: Any,
+    album_name: str,
+    file_path: str,
+    file_base64: str,
+    file_uri: str,
+) -> None:
+    candidates = [
+        (
+            "group=int|album_id=str|album_name=str|file=raw_path",
+            raw_group_id,
+            str(raw_album_id),
+            str(album_name),
+            file_path,
+        ),
+        (
+            "group=int|album_id=str|album_name=str|file=base64",
+            raw_group_id,
+            str(raw_album_id),
+            str(album_name),
+            file_base64,
+        ),
+        (
+            "group=int|album_id=str|album_name=str|file=file_uri",
+            raw_group_id,
+            str(raw_album_id),
+            str(album_name),
+            file_uri,
+        ),
+    ]
+    last_error = None
+    failure_modes: list[tuple[str, str]] = []
+    for mode, group_value, album_id_value, album_name_value, file_value in candidates:
+        logger.debug(
+            "[qun_album] 尝试上传群相册图片(snowluma) "
+            f"模式={mode}, group_id={group_value}, "
+            f"album_id={album_id_value}, album_name={album_name_value}, "
+            f"file_preview={file_value[:120]}"
+        )
+        try:
+            await event.bot.api.call_action(
+                "upload_image_to_qun_album",
+                group_id=group_value,
+                album_id=album_id_value,
+                album_name=album_name_value,
+                file=file_value,
+            )
+            logger.debug(f"[qun_album] 上传群相册成功(snowluma)，模式: {mode}")
+            return
+        except Exception as e:
+            last_error = e
+            failure_modes.append((mode, str(e)))
+            logger.warning(f"[qun_album] 上传群相册失败(snowluma)，模式={mode}: {e}")
+    if failure_modes:
+        logger.debug(f"[qun_album] snowluma 各上传模式失败详情: {failure_modes}")
+    raise last_error
+
+
+async def upload_album_image_with_fallback(
+    event: AiocqhttpMessageEvent,
+    raw_group_id: int,
+    raw_album_id: Any,
+    album_name: str,
+    save_path: Path,
+    backend: str = "napcat",
+) -> None:
+    file_path = str(save_path.absolute())
+    file_uri = f"file://{save_path.absolute()}"
+    file_base64 = f"base64://{base64.b64encode(save_path.read_bytes()).decode('ascii')}"
+
+    if backend == "llbot":
+        candidates = [
+            ("group=int|album_id=str|files=[raw_path]", [file_path]),
+            ("group=int|album_id=str|files=[file_uri]", [file_uri]),
+            ("group=int|album_id=str|files=[base64]", [file_base64]),
+        ]
+        last_error = None
+        failure_modes: list[tuple[str, str]] = []
+        for mode, files_value in candidates:
+            logger.debug(
+                "[qun_album] 尝试上传群相册图片(llbot) "
+                f"模式={mode}, group_id={raw_group_id}, "
+                f"album_id={raw_album_id}, files_preview={files_value[0][:120]}"
+            )
+            try:
+                await event.bot.api.call_action(
+                    "upload_group_album",
+                    group_id=raw_group_id,
+                    album_id=str(raw_album_id),
+                    files=files_value,
+                )
+                logger.debug(f"[qun_album] 上传群相册成功(llbot)，模式: {mode}")
+                return
+            except Exception as e:
+                last_error = e
+                failure_modes.append((mode, str(e)))
+                logger.warning(f"[qun_album] 上传群相册失败(llbot)，模式={mode}: {e}")
+        if failure_modes:
+            logger.debug(f"[qun_album] llbot 各上传模式失败详情: {failure_modes}")
+        raise last_error
+
+    if backend == "snowluma":
+        await _upload_snowluma(
+            event,
+            raw_group_id,
+            raw_album_id,
+            album_name,
+            file_path,
+            file_base64,
+            file_uri,
+        )
+    else:
+        await _upload_napcat(
+            event,
+            raw_group_id,
+            raw_album_id,
+            album_name,
+            file_path,
+            file_base64,
+            file_uri,
+        )
 
 
 async def download_image(url: str, http: bool = True) -> bytes | None:
@@ -125,6 +265,7 @@ async def download_image(url: str, http: bool = True) -> bytes | None:
     except Exception as e:
         logger.error(f"图片下载失败: {e}")
         return None
+
 
 async def get_avatar(user_id: str) -> bytes | None:
     """根据 QQ 号下载头像"""
@@ -142,6 +283,7 @@ async def get_avatar(user_id: str) -> bytes | None:
         logger.error(f"下载头像失败: {e}")
         return None
 
+
 async def load_bytes(src: str) -> bytes | None:
     """统一把 src 转成 bytes"""
     raw: Optional[bytes] = None
@@ -156,6 +298,7 @@ async def load_bytes(src: str) -> bytes | None:
         return base64.b64decode(src[9:])
     return raw
 
+
 async def get_first_image(event: AstrMessageEvent) -> bytes | None:
     """
     获取消息里的第一张图并以 Base64 字符串返回。
@@ -166,9 +309,7 @@ async def get_first_image(event: AstrMessageEvent) -> bytes | None:
     """
 
     # ---------- 1. 先看引用 ----------
-    reply_seg = next(
-        (s for s in event.get_messages() if isinstance(s, Reply)), None
-    )
+    reply_seg = next((s for s in event.get_messages() if isinstance(s, Reply)), None)
     if reply_seg and reply_seg.chain:
         for seg in reply_seg.chain:
             if isinstance(seg, Image):
@@ -178,7 +319,9 @@ async def get_first_image(event: AstrMessageEvent) -> bytes | None:
                     return img
             elif isinstance(seg, File):
                 # 检查是否为图片文件
-                if seg.name and seg.name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+                if seg.name and seg.name.lower().endswith(
+                    (".jpg", ".jpeg", ".png", ".gif", ".webp")
+                ):
                     try:
                         local_path = await seg.get_file()
                         if local_path and Path(local_path).exists():
@@ -194,8 +337,10 @@ async def get_first_image(event: AstrMessageEvent) -> bytes | None:
             if seg.file and (img := await load_bytes(seg.file)):
                 return img
         elif isinstance(seg, File):
-             # 检查是否为图片文件
-            if seg.name and seg.name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+            # 检查是否为图片文件
+            if seg.name and seg.name.lower().endswith(
+                (".jpg", ".jpeg", ".png", ".gif", ".webp")
+            ):
                 try:
                     local_path = await seg.get_file()
                     if local_path and Path(local_path).exists():
@@ -213,6 +358,7 @@ def get_replyer_id(event: AiocqhttpMessageEvent) -> str | None:
     ):
         rid = reply_seg.sender_id
         return str(rid) if rid else None
+
 
 async def get_reply_text_async(event: AiocqhttpMessageEvent) -> str:
     """
@@ -232,6 +378,7 @@ async def get_reply_text_async(event: AiocqhttpMessageEvent) -> str:
                 text += f"[文件: {seg.name}]"
     return text
 
+
 async def get_user_name(client: CQHttp, user_id: int, group_id: int = 0) -> str:
     """
     获取群成员的昵称或群名片，无法获取则返回“未知用户”
@@ -239,20 +386,25 @@ async def get_user_name(client: CQHttp, user_id: int, group_id: int = 0) -> str:
     if user_id == 0:
         return "未知"
     if group_id:
-        member_info = await client.get_group_member_info(group_id=group_id, user_id=user_id)
+        member_info = await client.get_group_member_info(
+            group_id=group_id, user_id=user_id
+        )
         if name := member_info.get("card") or member_info.get("nickname"):
             return name
     name = (await client.get_stranger_info(user_id=user_id)).get("nickname")
     return name or "未知"
 
-async def check_group_level_permission(event: AiocqhttpMessageEvent, level_threshold: int) -> tuple[bool, int]:
+
+async def check_group_level_permission(
+    event: AiocqhttpMessageEvent, level_threshold: int
+) -> tuple[bool, int]:
     """
     检查群成员等级权限
     返回: (是否允许, 当前等级)
     """
     if level_threshold <= 0:
         return True, 0
-    
+
     try:
         group_id = int(event.get_group_id())
         user_id = int(event.get_sender_id())
@@ -261,69 +413,81 @@ async def check_group_level_permission(event: AiocqhttpMessageEvent, level_thres
         )
         level = int(info.get("level", 0))
         role = info.get("role", "unknown")
-        
+
         # 如果是管理员或群主，直接通过
         if role in ["owner", "admin"]:
             return True, level
-            
+
         if level >= level_threshold:
             return True, level
-            
+
         return False, level
     except Exception as e:
         logger.warning(f"获取群成员等级失败: {e}")
         # 获取失败时默认放行
         return True, 0
 
+
 async def get_message_history(event: AiocqhttpMessageEvent, count: int) -> list[dict]:
     """
     获取回复的消息及其之上的 count-1 条消息。
     """
     # 获取被回复的消息 ID
-    reply_seg = next((seg for seg in event.get_messages() if isinstance(seg, Reply)), None)
+    reply_seg = next(
+        (seg for seg in event.get_messages() if isinstance(seg, Reply)), None
+    )
     if reply_seg:
-        reply_msg_id = getattr(reply_seg, "id", None) or getattr(reply_seg, "message_id", None)
-        logger.debug(f"[qun_album] 从 Reply 组件解析 reply_msg_id: {reply_msg_id}, Reply 对象: {reply_seg}")
+        reply_msg_id = getattr(reply_seg, "id", None) or getattr(
+            reply_seg, "message_id", None
+        )
+        logger.debug(
+            f"[qun_album] 从 Reply 组件解析 reply_msg_id: {reply_msg_id}, Reply 对象: {reply_seg}"
+        )
     else:
-        logger.debug(f"[qun_album] 未能解析到回复消息 ID. 消息链: {event.get_messages()}")
+        logger.debug(
+            f"[qun_album] 未能解析到回复消息 ID. 消息链: {event.get_messages()}"
+        )
         return []
 
     reply_msg_id = str(reply_msg_id)
     group_id = int(event.get_group_id())
-    logger.debug(f"[qun_album] 开始迭代搜索. 目标 ID: {reply_msg_id}, 群号: {group_id}, 计划获取数量: {count}")
+    logger.debug(
+        f"[qun_album] 开始迭代搜索. 目标 ID: {reply_msg_id}, 群号: {group_id}, 计划获取数量: {count}"
+    )
 
     try:
         # 1. 先获取目标消息的时间戳，用于后续范围判定
         target_msg_res = await event.bot.get_msg(message_id=reply_msg_id)
-        target_time = target_msg_res.get("time") if isinstance(target_msg_res, dict) else None
-        
+        target_time = (
+            target_msg_res.get("time") if isinstance(target_msg_res, dict) else None
+        )
+
         if not target_time:
             logger.error(f"[qun_album] 无法获取目标消息 {reply_msg_id} 的时间戳")
             return []
-            
+
         logger.debug(f"[qun_album] 目标消息时间戳: {target_time}")
 
         # 2. 采用迭代搜索的方式，从最新消息开始逐步扩大范围
         # 起始 100 条，其次 1000，然后 2000 依次翻倍，上限 32000
         search_counts = [100, 1000, 2000, 4000, 8000, 16000, 32000]
         target_messages = []
-        
+
         for search_count in search_counts:
             # 获取最新的 search_count 条消息，使用正序获取，即 [旧, ..., 最新]
             res = await event.bot.get_group_msg_history(
-                group_id=group_id, 
-                message_seq=0, 
-                count=search_count,
-                reverseOrder=False
+                group_id=group_id, message_seq=0, count=search_count, reverseOrder=False
             )
-            
+
             messages = res.get("messages", []) if isinstance(res, dict) else res
             if not messages:
                 continue
-            
+
             # 获取当前批次最老的消息时间
             earliest_time = messages[0].get("time")
-            logger.debug(f"[qun_album] 搜索范围 {search_count}: 最早时间 {earliest_time}, 目标时间 {target_time}")
+            logger.debug(
+                f"[qun_album] 搜索范围 {search_count}: 最早时间 {earliest_time}, 目标时间 {target_time}"
+            )
 
             # 如果当前批次的最早时间已经早于或等于目标时间，说明目标消息必然在当前批次内
             if earliest_time <= target_time:
@@ -333,26 +497,30 @@ async def get_message_history(event: AiocqhttpMessageEvent, count: int) -> list[
                     if str(msg.get("message_id")) == reply_msg_id:
                         target_idx = i
                         break
-                
+
                 if target_idx != -1:
-                    logger.debug(f"[qun_album] 找到目标. target_idx: {target_idx}, 计划获取有效消息数量: {count}")
-                    
+                    logger.debug(
+                        f"[qun_album] 找到目标. target_idx: {target_idx}, 计划获取有效消息数量: {count}"
+                    )
+
                     target_messages = []
                     # 从 target_idx 开始往前找（往旧的方向找），直到找齐 count 条有效消息
                     for i in range(target_idx, -1, -1):
                         msg = messages[i]
-                        sender_id = str(msg.get("user_id") or msg.get("sender", {}).get("user_id"))
+                        sender_id = str(
+                            msg.get("user_id") or msg.get("sender", {}).get("user_id")
+                        )
                         text = ""
                         raw_msg = msg.get("message")
-                        
+
                         if isinstance(raw_msg, list):
                             for seg in raw_msg:
                                 if seg.get("type") == "text":
                                     text += seg.get("data", {}).get("text", "")
                                 elif seg.get("type") == "at":
-                                    data = seg.get('data', {})
-                                    qq = data.get('qq')
-                                    name = data.get('name')
+                                    data = seg.get("data", {})
+                                    qq = data.get("qq")
+                                    name = data.get("name")
                                     if not name and qq:
                                         try:
                                             name = await get_user_name(
@@ -362,38 +530,47 @@ async def get_message_history(event: AiocqhttpMessageEvent, count: int) -> list[
                                             )
                                         except Exception:
                                             name = str(qq)
-                                    
+
                                     if name:
                                         text += f"@{name} "
                                 elif seg.get("type") == "file":
-                                    file_name = seg.get("data", {}).get("file", "未知文件")
+                                    file_name = seg.get("data", {}).get(
+                                        "file", "未知文件"
+                                    )
                                     text += f"[文件: {file_name}]"
                         elif isinstance(raw_msg, str):
                             text = raw_msg
 
                         if text.strip():
-                            target_messages.append({
-                                "user_id": sender_id,
-                                "text": text,
-                                "message_id": msg.get("message_id")
-                            })
-                        
+                            target_messages.append(
+                                {
+                                    "user_id": sender_id,
+                                    "text": text,
+                                    "message_id": msg.get("message_id"),
+                                }
+                            )
+
                         if len(target_messages) >= count:
                             break
-                    
+
                     target_messages.reverse()
-                    
-                    logger.debug(f"[qun_album] 最终获取到的有效消息列表(正序): {[m['text'] for m in target_messages]}")
+
+                    logger.debug(
+                        f"[qun_album] 最终获取到的有效消息列表(正序): {[m['text'] for m in target_messages]}"
+                    )
                     return target_messages
                 else:
-                    logger.warning(f"[qun_album] 时间戳判定在范围内但未找到 ID: {reply_msg_id}，继续扩大搜索范围")
-                        
+                    logger.warning(
+                        f"[qun_album] 时间戳判定在范围内但未找到 ID: {reply_msg_id}，继续扩大搜索范围"
+                    )
+
         logger.error(f"在最近 32000 条消息中未找到目标消息 ID: {reply_msg_id}")
         return []
-        
+
     except Exception as e:
         logger.error(f"获取历史记录失败: {e}")
         return []
+
 
 async def get_member_rich_info(client: CQHttp, group_id: int, user_id: int) -> dict:
     """
@@ -407,13 +584,8 @@ async def get_member_rich_info(client: CQHttp, group_id: int, user_id: int) -> d
             "role": info.get("role", "member"),
             "level": int(info.get("level", 0)),
             "title": info.get("title", ""),
-            "nickname": info.get("card") or info.get("nickname") or str(user_id)
+            "nickname": info.get("card") or info.get("nickname") or str(user_id),
         }
     except Exception as e:
         logger.warning(f"获取群成员信息失败: {e}")
-        return {
-            "role": "member",
-            "level": 0,
-            "title": "",
-            "nickname": str(user_id)
-        }
+        return {"role": "member", "level": 0, "title": "", "nickname": str(user_id)}

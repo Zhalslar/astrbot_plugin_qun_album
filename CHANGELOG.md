@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.1 (2026-08-14)
+
+### Bug Fixes
+- 修复 emoji 2.x 环境下旧版 pilmoji 导入报错导致插件无法加载的问题
+
 ## v1.2.0 (2026-08-01)
 
 ### Features

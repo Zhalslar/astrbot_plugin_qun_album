@@ -9,14 +9,48 @@ from .utils import (
     get_member_rich_info,
 )
 from PIL import Image, ImageDraw, ImageFont
-
-try:
-    from pilmoji import Pilmoji
-except ImportError:
-    Pilmoji = None
 import io
 from pathlib import Path
 import re
+
+try:
+    import emoji
+    from emoji import unicode_codes
+
+    if not hasattr(unicode_codes, "get_emoji_unicode_dict"):
+
+        def get_emoji_unicode_dict(lang):
+            return {
+                data[lang]: char
+                for char, data in emoji.EMOJI_DATA.items()
+                if lang in data
+            }
+
+        unicode_codes.get_emoji_unicode_dict = get_emoji_unicode_dict
+
+    if not hasattr(unicode_codes, "EMOJI_UNICODE"):
+        unicode_codes.EMOJI_UNICODE = {"en": get_emoji_unicode_dict("en")}
+
+    if not hasattr(emoji, "get_emoji_regexp"):
+        _emoji_regexp = None
+
+        def get_emoji_regexp():
+            global _emoji_regexp
+            if _emoji_regexp is None:
+                emojis = sorted(emoji.EMOJI_DATA.keys(), key=len, reverse=True)
+                pattern = "|".join(re.escape(e) for e in emojis)
+                _emoji_regexp = re.compile(pattern)
+            return _emoji_regexp
+
+        emoji.get_emoji_regexp = get_emoji_regexp
+
+except Exception:
+    pass
+
+try:
+    from pilmoji import Pilmoji
+except Exception:
+    Pilmoji = None
 
 RESOURCES_DIR = Path(__file__).parent.parent / "resources"
 FONT_DIR: Path | None = None
